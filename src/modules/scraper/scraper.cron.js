@@ -8,7 +8,7 @@ export function initCronJobs() {
     // ─── Backward Crawler Cron ───────────────────────────────────
     // Runs every 20 seconds to fetch reports in reverse chronological order.
     cron.schedule(
-        '0 */1 * * * *',
+        '0 */10 * * * *',
         async () => {
             console.log('\n⏰ ═══════════════════════════════════════');
             console.log('⏰ Backward crawler cron job triggered at', new Date().toISOString());
