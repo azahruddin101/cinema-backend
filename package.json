@@ -1,0 +1,55 @@
+{
+  "name": "cinema-mis-backend",
+  "version": "1.0.0",
+  "description": "Cinema MIS Dashboard Backend - Scrapes MIS reports and provides analytics APIs",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "nodemon src/server.js",
+    "seed": "node src/scripts/seed.js"
+  },
+  "keywords": [
+    "cinema",
+    "mis",
+    "dashboard",
+    "analytics",
+    "scraper"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@langchain/community": "^1.1.22",
+    "@langchain/core": "^1.1.31",
+    "@langchain/openai": "^1.2.12",
+    "@langchain/qdrant": "^1.0.1",
+    "@qdrant/js-client-rest": "^1.17.0",
+    "@tensorflow/tfjs": "^4.22.0",
+    "@xenova/transformers": "^2.17.2",
+    "axios": "^1.13.6",
+    "bcryptjs": "^2.4.3",
+    "cheerio": "^1.0.0",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "exceljs": "^4.4.0",
+    "express": "^4.21.2",
+    "express-rate-limit": "^7.5.0",
+    "express-validator": "^7.2.1",
+    "helmet": "^8.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "langchain": "^1.2.30",
+    "mongoose": "^8.12.1",
+    "morgan": "^1.10.0",
+    "node-cron": "^3.0.3",
+    "openai": "^6.27.0",
+    "pdfkit": "^0.17.2",
+    "pdfkit-table": "^0.1.99",
+    "quickchart-js": "^3.1.3",
+    "swagger-jsdoc": "^6.2.8",
+    "swagger-ui-express": "^5.0.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.9"
+  }
+}
