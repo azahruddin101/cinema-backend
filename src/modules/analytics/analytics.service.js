@@ -74,8 +74,8 @@ class AnalyticsService {
     }));
 
     const days = [
-      "Sunday","Monday","Tuesday","Wednesday",
-      "Thursday","Friday","Saturday"
+      "Sunday", "Monday", "Tuesday", "Wednesday",
+      "Thursday", "Friday", "Saturday"
     ];
 
     const dayEfficiency = {};
@@ -121,7 +121,7 @@ class AnalyticsService {
       const TMDB = "https://api.themoviedb.org/3";
       // Ensure TMDB_API_KEY is in .env
       const apiKey = process.env.TMDB_API_KEY;
-      
+
       if (!apiKey) return { actors: [], genres: [], rating: null };
 
       const search = await axios.get(`${TMDB}/search/movie`, {
@@ -229,8 +229,8 @@ class AnalyticsService {
 
   async _generateAIReasoning(data) {
     if (!this.openai) {
-      return { 
-        executiveSummary: "AI insight is disabled. Please configure OPENAI_API_KEY." 
+      return {
+        executiveSummary: "AI insight is disabled. Please configure OPENAI_API_KEY."
       };
     }
 
@@ -266,7 +266,7 @@ class AnalyticsService {
 
     try {
       const response = await this.openai.chat.completions.create({
-        model: "gpt-4-turbo-preview",
+        model: "gpt-5-mini",
         messages: [{ role: "user", content: prompt }],
         response_format: { type: "json_object" }
       });

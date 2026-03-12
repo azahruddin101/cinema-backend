@@ -22,9 +22,10 @@ class ScraperService {
      * Fetch raw HTML reports from the MIS endpoint for a given date.
      * Hits Revenue (Films), Patrons (Films), Revenue (Screens), and Concessions views.
      * @param {string} dateStr - YYYY-MM-DD format.
+     * @param {number} retries - Number of retries for timeouts.
      * @returns {Promise<{revenueHtml: string, patronsHtml: string, screensHtml: string, concessionsHtml: string}>}
      */
-    async fetchReportHTMLs(dateStr) {
+    async fetchReportHTMLs(dateStr, retries = 3) {
         const { from, to } = getMISDateRange(dateStr);
 
         const baseURL = process.env.MIS_BASE_URL || this.baseURL || '';
@@ -40,46 +41,45 @@ class ScraperService {
         };
 
         const config = {
-            timeout: 30000,
+            timeout: parseInt(process.env.SCRAPER_TIMEOUT_MS, 10) || 60000, // Increased default timeout to 60s
             headers: {
                 'User-Agent': 'CinemaMIS-Scraper/1.0',
                 Accept: 'text/html, application/xhtml+xml',
             },
         };
 
+        const fetchWithRetry = async (params, label) => {
+            for (let i = 0; i <= retries; i++) {
+                try {
+                    console.log(`🔗 Request URL (${label}): ${url}?${new URLSearchParams(params).toString()}`);
+                    const response = await axios.get(url, { params, ...config });
+                    return response.data;
+                } catch (error) {
+                    const isTimeout = error.code === 'ECONNABORTED' || error.message.toLowerCase().includes('timeout');
+                    if (isTimeout && i < retries) {
+                        const waitTime = (i + 1) * 5000;
+                        console.warn(`⚠️  Timeout on ${label}. Retrying in ${waitTime / 1000}s... (${i + 1}/${retries})`);
+                        await sleep(waitTime);
+                        continue;
+                    }
+                    throw error;
+                }
+            }
+        };
+
         console.log(`📡 Fetching MIS report for ${dateStr} (From: ${from}, To: ${to})`);
 
         try {
-            // First fetch the Revenue HTML (Films)
-            const revenueParams = { ...baseParams, RType: 'Revenue', FilmWiseORScreenWise: 'F' };
-            console.log(`🔗 Request URL (Revenue-Films): ${url}?${new URLSearchParams(revenueParams).toString()}`);
-            const resRevenue = await axios.get(url, { params: revenueParams, ...config });
+            const revenueHtml = await fetchWithRetry({ ...baseParams, RType: 'Revenue', FilmWiseORScreenWise: 'F' }, 'Revenue-Films');
+            const patronsHtml = await fetchWithRetry({ ...baseParams, RType: 'Patrons', FilmWiseORScreenWise: 'F' }, 'Patrons-Films');
+            const screensHtml = await fetchWithRetry({ ...baseParams, RType: 'Revenue', FilmWiseORScreenWise: 'S' }, 'Revenue-Screens');
+            const concessionsHtml = await fetchWithRetry({ ...baseParams, RType: 'Concession', FilmWiseORScreenWise: 'F' }, 'Concessions');
 
-            // Next fetch the Patrons HTML (Films)
-            const patronsParams = { ...baseParams, RType: 'Patrons', FilmWiseORScreenWise: 'F' };
-            console.log(`🔗 Request URL (Patrons-Films): ${url}?${new URLSearchParams(patronsParams).toString()}`);
-            const resPatrons = await axios.get(url, { params: patronsParams, ...config });
-
-            // Fetch the Revenue HTML (Screens)
-            const screensParams = { ...baseParams, RType: 'Revenue', FilmWiseORScreenWise: 'S' };
-            console.log(`🔗 Request URL (Revenue-Screens): ${url}?${new URLSearchParams(screensParams).toString()}`);
-            const resScreens = await axios.get(url, { params: screensParams, ...config });
-
-            // Fetch the Concessions HTML
-            const concessionsParams = { ...baseParams, RType: 'Concession', FilmWiseORScreenWise: 'F' };
-            console.log(`🔗 Request URL (Concessions): ${url}?${new URLSearchParams(concessionsParams).toString()}`);
-            const resConcessions = await axios.get(url, { params: concessionsParams, ...config });
-
-            return {
-                revenueHtml: resRevenue.data,
-                patronsHtml: resPatrons.data,
-                screensHtml: resScreens.data,
-                concessionsHtml: resConcessions.data
-            };
+            return { revenueHtml, patronsHtml, screensHtml, concessionsHtml };
         } catch (error) {
             const status = error.response?.status;
             const msg = error.message;
-            console.error(`❌ Failed to fetch report for ${dateStr}: [${status}] ${msg}`);
+            console.error(`❌ Failed to fetch report for ${dateStr}: [${status || 'TIMEOUT'}] ${msg}`);
             throw new Error(`Failed to fetch MIS report for ${dateStr}: ${msg}`);
         }
     }
@@ -112,25 +112,25 @@ class ScraperService {
         }
 
         // Save or update
+        let saved;
         if (existing && overwrite) {
             existing.films = films;
             existing.screens = screens;
             existing.concessions = concessions;
-            const saved = await existing.save(); // triggers pre-save hook for totals
+            saved = await existing.save(); // triggers pre-save hook for totals
             console.log(`🔄 Report for ${dateStr} updated (${films.length} films, ${screens.length} screens, ${concessions.length} concessions).`);
-            return saved;
+        } else {
+            const report = new Report({
+                date: dateStr,
+                films,
+                screens,
+                concessions
+            });
+            saved = await report.save();
+            console.log(`✅ Report for ${dateStr} saved (${films.length} films, ${screens.length} screens, ${concessions.length} concessions).`);
         }
 
-        const report = new Report({
-            date: dateStr,
-            films,
-            screens,
-            concessions
-        });
-        const saved = await report.save();
-        console.log(`✅ Report for ${dateStr} saved (${films.length} films, ${screens.length} screens, ${concessions.length} concessions).`);
-
-        // Trigger incremental indexing to Chatbot (background)
+        // Trigger incremental indexing to Chatbot (background) for both new and updated reports
         chatbotService.indexSingleReport(saved).catch(err =>
             console.error(`⚠️  Chatbot auto-indexing failed for ${dateStr}:`, err.message)
         );
@@ -188,9 +188,10 @@ class ScraperService {
      * @param {string} startDate - YYYY-MM-DD
      * @param {string} endDate   - YYYY-MM-DD
      * @param {boolean} overwrite
+     * @param {boolean} stopOnError - If true, stop the backfill process on first error to prevent gaps.
      * @returns {Promise<object>} Summary of the backfill operation.
      */
-    async backfill(startDate, endDate, overwrite = false) {
+    async backfill(startDate, endDate, overwrite = false, stopOnError = true) {
         const dates = getDateRange(startDate, endDate);
         console.log(
             `\n📅 Backfill started: ${startDate} → ${endDate} (${dates.length} days)\n`
@@ -206,8 +207,9 @@ class ScraperService {
 
         for (let i = 0; i < dates.length; i++) {
             const dateStr = dates[i];
+            let result;
             try {
-                const result = await this.scrapeAndSave(dateStr, overwrite);
+                result = await this.scrapeAndSave(dateStr, overwrite);
                 if (result.skipped) {
                     results.skipped++;
                 } else {
@@ -217,10 +219,15 @@ class ScraperService {
                 results.failed++;
                 results.errors.push({ date: dateStr, error: error.message });
                 console.error(`❌ Backfill error for ${dateStr}: ${error.message}`);
+                
+                if (stopOnError) {
+                    console.log(`🛑 Stopping backfill to prevent data gaps. Please check the error and restart the script.`);
+                    throw error;
+                }
             }
 
-            // Delay between requests to prevent rate limiting (except on the last one)
-            if (i < dates.length - 1) {
+            // Delay between requests to prevent rate limiting (except on the last one or if skipped)
+            if (i < dates.length - 1 && (!result || !result.skipped)) {
                 console.log(`⏳ Waiting ${this.delayMs}ms before next request...`);
                 await sleep(this.delayMs);
             }

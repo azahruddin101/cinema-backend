@@ -32,6 +32,38 @@ class ChatbotService {
         }
     }
 
+    _getQdrantConfig() {
+        const collectionName = process.env.QDRANT_COLLECTION_NAME || "cinema_reports";
+        const rawUrl = (process.env.QDRANT_URL || "").trim();
+        const isProduction = process.env.NODE_ENV === "production";
+        const fallbackLocalUrl = "http://localhost:6333";
+
+        const url = rawUrl || (isProduction ? null : fallbackLocalUrl);
+
+        if (!url) {
+            throw new Error(
+                "QDRANT_URL is missing in production. Set it to your Qdrant Cloud endpoint (https://<cluster>.<region>.cloud.qdrant.io[:6333])."
+            );
+        }
+
+        if (isProduction && /(localhost|127\.0\.0\.1)/i.test(url)) {
+            throw new Error(
+                `QDRANT_URL points to localhost in production (${url}). Use your Qdrant Cloud endpoint instead.`
+            );
+        }
+
+        return {
+            url: url.replace(/\/+$/, ""),
+            apiKey: process.env.QDRANT_API_KEY,
+            collectionName,
+        };
+    }
+
+    _formatQdrantError(error) {
+        const causeMessage = error?.cause?.message || error?.message || "Unknown network error";
+        return `Qdrant connection failed: ${causeMessage}. Check QDRANT_URL, QDRANT_API_KEY, and outbound network access from this server.`;
+    }
+
     /**
      * Initialize the vector store by loading all reports and generating summaries
      */
@@ -39,13 +71,14 @@ class ChatbotService {
         try {
             this._ensureInitialized();
             console.log("Initializing Chatbot Qdrant Vector Store...");
+            const qdrantConfig = this._getQdrantConfig();
 
             // 1. CLEAR existing collection to avoid duplicates/stale data
             const client = new QdrantClient({
-                url: process.env.QDRANT_URL || "http://localhost:6333",
-                apiKey: process.env.QDRANT_API_KEY
+                url: qdrantConfig.url,
+                apiKey: qdrantConfig.apiKey
             });
-            const collectionName = process.env.QDRANT_COLLECTION_NAME || "cinema_reports";
+            const collectionName = qdrantConfig.collectionName;
 
             try {
                 await client.deleteCollection(collectionName);
@@ -54,7 +87,8 @@ class ChatbotService {
                 console.log("Collection did not exist or could not be cleared, proceeding...");
             }
 
-            const reports = await Report.find({}).sort({ date: 1 });
+            const MIN_DATE = "2025-01-01";
+            const reports = await Report.find({ date: { $gte: MIN_DATE } }).sort({ date: 1 });
 
             if (!reports || reports.length === 0) {
                 console.warn("No reports found to index.");
@@ -95,16 +129,17 @@ class ChatbotService {
                 documents,
                 this.embeddings,
                 {
-                    url: process.env.QDRANT_URL || "http://localhost:6333",
-                    apiKey: process.env.QDRANT_API_KEY,
-                    collectionName: process.env.QDRANT_COLLECTION_NAME || "cinema_reports",
+                    url: qdrantConfig.url,
+                    apiKey: qdrantConfig.apiKey,
+                    collectionName: qdrantConfig.collectionName,
                 }
             );
 
             console.log(`Successfully indexed ${documents.length} document(s) into Qdrant collection.`);
         } catch (error) {
-            console.error("Failed to initialize Qdrant vector store:", error);
-            throw error;
+            const message = this._formatQdrantError(error);
+            console.error("Failed to initialize Qdrant vector store:", message);
+            throw new Error(message);
         }
     }
 
@@ -112,17 +147,22 @@ class ChatbotService {
      * Incrementally index a single report into existing Qdrant collection
      */
     async indexSingleReport(report) {
+        if (report.date < "2025-01-01") {
+            console.log(`⏭️  Skipping incremental indexing for ${report.date} (older than 2025-01-01)`);
+            return;
+        }
         try {
             this._ensureInitialized();
+            const qdrantConfig = this._getQdrantConfig();
 
             // Connect to existing store
             if (!this.vectorStore) {
                 this.vectorStore = await QdrantVectorStore.fromExistingCollection(
                     this.embeddings,
                     {
-                        url: process.env.QDRANT_URL || "http://localhost:6333",
-                        apiKey: process.env.QDRANT_API_KEY,
-                        collectionName: process.env.QDRANT_COLLECTION_NAME || "cinema_reports",
+                        url: qdrantConfig.url,
+                        apiKey: qdrantConfig.apiKey,
+                        collectionName: qdrantConfig.collectionName,
                     }
                 );
             }
@@ -328,24 +368,49 @@ class ChatbotService {
     }
 
     /**
+     * Delete a specific chat session
+     */
+    async deleteSession(sessionId, userId) {
+        const session = await ChatbotSession.findOne({ _id: sessionId, userId });
+        if (!session) {
+            throw new Error('Session not found or unauthorized');
+        }
+        await ChatbotSession.findByIdAndDelete(sessionId);
+        return { success: true, message: 'Session deleted successfully' };
+    }
+
+    /**
+     * Delete all chat sessions for a user
+     */
+    async deleteAllSessions(userId) {
+        const result = await ChatbotSession.deleteMany({ userId });
+        return { 
+            success: true, 
+            message: `Deleted ${result.deletedCount} session(s) successfully`,
+            deletedCount: result.deletedCount
+        };
+    }
+
+    /**
      * Answer a user question using RAG and Session Memory
      */
     async ask(question, userId, sessionId = null) {
         this._ensureInitialized();
+        const qdrantConfig = this._getQdrantConfig();
         // Attempt to connect to existing collection if not already connected
         if (!this.vectorStore) {
             try {
                 this.vectorStore = await QdrantVectorStore.fromExistingCollection(
                     this.embeddings,
                     {
-                        url: process.env.QDRANT_URL || "http://localhost:6333",
-                        apiKey: process.env.QDRANT_API_KEY,
-                        collectionName: process.env.QDRANT_COLLECTION_NAME || "cinema_reports",
+                        url: qdrantConfig.url,
+                        apiKey: qdrantConfig.apiKey,
+                        collectionName: qdrantConfig.collectionName,
                     }
                 );
                 console.log("Connected to existing Qdrant collection.");
             } catch (error) {
-                console.warn("Qdrant collection not found or connection failed. Initializing from scratch...");
+                console.warn(`${this._formatQdrantError(error)} Initializing from scratch...`);
                 await this.initializeVectorStore();
             }
         }
@@ -386,7 +451,7 @@ class ChatbotService {
         // 2. DETECT SPECIFIC DATE in query for mandatory injection
         let specificDateContext = "";
         const detectedDate = this._extractDate(question);
-        if (detectedDate) {
+        if (detectedDate && detectedDate >= "2025-01-01") {
             const specificReport = await Report.findOne({ date: detectedDate }).lean();
             if (specificReport) {
                 specificDateContext = `### SPECIFIC DATE REFERENCE DATA (${detectedDate})\n` +
@@ -403,6 +468,11 @@ class ChatbotService {
       - **"This Week"**: Sum reports from ${sevenDaysAgo.toDateString()} to today.
       - **"Last Week"**: Sum reports from ${fourteenDaysAgo.toDateString()} to ${new Date(sevenDaysAgo.getTime() - 1).toDateString()}.
       
+      ### DATA RESTRICTION
+      - **CRITICAL**: ONLY refer to data from **January 1st, 2025 onwards**.
+      - **DO NOT** mention, analyze, or acknowledge any data, films, or performance from before 2025-01-01.
+      - If the user asks about 2024 or earlier, politely state that you only have access to data starting from Jan 1, 2025.
+
       ### INSTRUCTIONS
       - **Whole DB Access**: You have access to the COMPLETE database of reports via the sections below. 
       - **Data Source Priority**:
@@ -452,7 +522,7 @@ class ChatbotService {
             combineDocsChain,
         });
 
-        const latestDailyReports = await Report.find({}).sort({ date: -1 }).limit(21).lean();
+        const latestDailyReports = await Report.find({ date: { $gte: "2025-01-01" } }).sort({ date: -1 }).limit(21).lean();
         const latestFormatted = latestDailyReports.map(r => this._formatReportToText(r)).join("\n---\n");
 
         const response = await retrievalChain.invoke({

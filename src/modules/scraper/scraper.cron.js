@@ -5,11 +5,20 @@ import scraperService from './scraper.service.js';
  * Initialize all scraper cron jobs.
  */
 export function initCronJobs() {
+    const enableCrons = process.env.ENABLE_CRONS === 'true';
+    const enableBackward = process.env.ENABLE_BACKWARD_CRAWLER === 'true';
+
+    if (!enableCrons) {
+        console.log('⚠️  Cron jobs are DISABLED (ENABLE_CRONS is not true).');
+        return;
+    }
+
     // ─── Backward Crawler Cron ───────────────────────────────────
-    // Runs every 20 seconds to fetch reports in reverse chronological order.
-    cron.schedule(
-        '0 */10 * * * *',
-        async () => {
+    if (enableBackward) {
+        // Runs every 20 seconds to fetch reports in reverse chronological order.
+        cron.schedule(
+            '0 */10 * * * *',
+            async () => {
             console.log('\n⏰ ═══════════════════════════════════════');
             console.log('⏰ Backward crawler cron job triggered at', new Date().toISOString());
             console.log('⏰ ═══════════════════════════════════════\n');
@@ -26,9 +35,14 @@ export function initCronJobs() {
             scheduled: true,
             timezone: 'Asia/Kolkata', // IST
         }
-    );
+        );
+    } else {
+        console.log('ℹ️  Backward report crawler is DISABLED.');
+    }
 
     // ─── Forward Daily Scraper Cron ──────────────────────────────
+    const enableDaily = process.env.ENABLE_DAILY_SCRAPER === 'true';
+    if (enableDaily) {
     // Runs once a day at 5:00 AM IST to fetch yesterday's report.
     cron.schedule(
         '0 5 * * *',
@@ -48,7 +62,10 @@ export function initCronJobs() {
             scheduled: true,
             timezone: 'Asia/Kolkata', // IST
         }
-    );
+        );
+    } else {
+        console.log('ℹ️  Daily forward scraper is DISABLED.');
+    }
 
     console.log('⏰ Cron jobs initialized:');
     console.log('   • Backward report crawler → Every 1 min (approx)');

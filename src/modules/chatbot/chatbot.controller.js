@@ -83,3 +83,53 @@ export const syncChatbotData = async (req, res, next) => {
         next(error);
     }
 };
+
+/**
+ * @desc    Delete a specific chat session
+ * @route   DELETE /api/chatbot/sessions/:sessionId
+ * @access  Private/Admin
+ */
+export const deleteChatSession = async (req, res, next) => {
+    try {
+        const { sessionId } = req.params;
+        const userId = req.user.id;
+        
+        const result = await chatbotService.deleteSession(sessionId, userId);
+        
+        res.status(200).json({
+            success: true,
+            message: result.message
+        });
+    } catch (error) {
+        if (error.message === 'Session not found or unauthorized') {
+            return res.status(404).json({
+                success: false,
+                message: error.message
+            });
+        }
+        next(error);
+    }
+};
+
+/**
+ * @desc    Delete all chat sessions for the current user
+ * @route   DELETE /api/chatbot/sessions
+ * @access  Private/Admin
+ */
+export const clearAllChatSessions = async (req, res, next) => {
+    try {
+        const userId = req.user.id;
+        
+        const result = await chatbotService.deleteAllSessions(userId);
+        
+        res.status(200).json({
+            success: true,
+            message: result.message,
+            data: {
+                deletedCount: result.deletedCount
+            }
+        });
+    } catch (error) {
+        next(error);
+    }
+};

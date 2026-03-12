@@ -5,6 +5,13 @@ import chatbotService from './chatbot.service.js';
  * Initialize chatbot-related cron jobs.
  */
 export function initChatbotCrons() {
+    const enableChatbot = process.env.ENABLE_CHATBOT_CRONS === 'true';
+
+    if (!enableChatbot) {
+        console.log('🤖 Chatbot crons are DISABLED (ENABLE_CHATBOT_CRONS is not true).');
+        return;
+    }
+
     // ─── Daily Indexing Cron ──────────────────────────────────────
     // Runs at 6:00 AM every day to refresh the vector store with all MongoDB reports.
     cron.schedule(
